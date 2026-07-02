@@ -5,9 +5,9 @@ import { useCartStore } from '@/store/useCartStore'
 import { findTeam } from '@/store/useCatalogStore'
 import { shopClubFromPath, isJoinPath } from '@/store/useAuthStore'
 
-/* The Design step (step 1) is internally a sport → club → style flow. */
-export type DesignSub = 'sport' | 'club' | 'template'
-const DESIGN_SUBS: DesignSub[] = ['sport', 'club', 'template']
+/* The Design step (step 1) is internally a sport → place → club → style flow. */
+export type DesignSub = 'sport' | 'place' | 'club' | 'template'
+const DESIGN_SUBS: DesignSub[] = ['sport', 'place', 'club', 'template']
 
 /* The non-partner `/join` prelude: a club registration form, then a "set up your
    design" chooser. Once the chooser hands off into the builder, joinPhase → null
@@ -73,6 +73,7 @@ const JOIN_EXIT = {
   shopClubId: null,
   step: 0 as StepId,
   designSub: 'sport' as DesignSub,
+  placeId: null,
   sportId: null,
   clubId: null,
   joinClub: null,
@@ -85,6 +86,7 @@ interface FlowState {
 
   // Selections (Step 1)
   designSub: DesignSub
+  placeId: string | null
   sportId: string | null
   clubId: string | null
   templateId: string | null
@@ -128,6 +130,7 @@ interface FlowState {
 
   // Mutations
   setDesignSub: (sub: DesignSub) => void
+  setPlace: (id: string) => void
   setSport: (id: string) => void
   setClub: (id: string) => void
   setTemplate: (id: string) => void
@@ -169,6 +172,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   step: 0,
   // On a Pro Shop URL the club is pre-locked and we open at the style picker.
   designSub: BOOT ? 'template' : 'sport',
+  placeId: null,
   sportId: BOOT?.sportId ?? null,
   clubId: BOOT?.clubId ?? null,
   templateId: null,
@@ -231,10 +235,14 @@ export const useFlowStore = create<FlowState>((set, get) => ({
 
   setDesignSub: (sub) => set({ designSub: sub }),
 
+  // Changing location invalidates the club choice (clubs are filtered by place).
+  setPlace: (id) =>
+    set((s) => (s.placeId === id ? s : { placeId: id, clubId: null })),
+
   setSport: (id) =>
     set((s) =>
-      // Changing sport invalidates the club choice downstream of it.
-      s.sportId === id ? s : { sportId: id, clubId: null },
+      // Changing sport invalidates the location + club choices downstream of it.
+      s.sportId === id ? s : { sportId: id, placeId: null, clubId: null },
     ),
   setClub: (id) => set({ clubId: id }),
   setTemplate: (id) => set({ templateId: id }),
@@ -259,7 +267,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   // and we drop straight onto the style picker.
   startAnother: () =>
     set((s) => {
-      const base: Partial<FlowState> = { step: 1, ...CLEARED_POSTER }
+      const base: Partial<FlowState> = { step: 1, placeId: null, ...CLEARED_POSTER }
       if (s.shopClubId) {
         return { ...base, designSub: 'template', clubId: s.shopClubId, sportId: findTeam(s.shopClubId)?.sportId ?? null }
       }
@@ -269,6 +277,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
   reset: () =>
     set((s) => {
       const base: Partial<FlowState> = {
+        placeId: null,
         ...CLEARED_POSTER,
         order: EMPTY_ORDER,
         orderNumber: null,
@@ -288,6 +297,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         shopClubId: clubId,
         clubId,
         sportId: club.sportId,
+        placeId: null,
         designSub: 'template',
         step: 0,
         // A Pro Shop and the join funnel are mutually exclusive locked modes.
@@ -303,6 +313,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       shopClubId: null,
       step: 0,
       designSub: 'sport',
+      placeId: null,
       sportId: null,
       clubId: null,
       ...CLEARED_POSTER,
@@ -318,6 +329,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       shopClubId: null,
       step: 0,
       designSub: 'sport',
+      placeId: null,
       sportId: null,
       clubId: null,
       ...CLEARED_POSTER,
@@ -338,6 +350,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       joinPhase: null,
       clubId: 'generic',
       sportId: 'house',
+      placeId: null,
       designSub: 'template',
       step: 1,
       ...CLEARED_POSTER,
@@ -352,6 +365,7 @@ export const useFlowStore = create<FlowState>((set, get) => ({
       joinPhase: null,
       clubId: 'generic',
       sportId: 'house',
+      placeId: null,
       designSub: 'template',
       templateId: 'minimal',
       photoUrl: designUrl,
@@ -364,8 +378,8 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     }),
 
   // The club isn't a partner → offer a logo-less generic poster in the colors of
-  // their choice (€14.99). Keep the real sportId (so canAccess passes and Back
-  // can rebuild the club grid); only the working poster is cleared.
+  // their choice (€14.99). Keep the real sportId/placeId (so canAccess passes and
+  // Back can rebuild the club grid); only the working poster is cleared.
   enterGenericDesign: (color) =>
     set({
       ...CLEARED_POSTER,
