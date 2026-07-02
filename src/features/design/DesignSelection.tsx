@@ -8,10 +8,11 @@ import { GenericDesign } from '@/features/design/GenericDesign'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog } from '@/components/ui/dialog'
-import { cn, fold } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useFlowStore } from '@/store/useFlowStore'
 import type { DesignSub } from '@/store/useFlowStore'
 import { SPORTS, getSport } from '@/data/sports'
+import { findPlaceByCityName, fold } from '@/data/places'
 import { Check } from 'lucide-react'
 import {
   useTeams,
@@ -28,6 +29,7 @@ import { shopConfigForClub } from '@/data/shopConfig'
 
 const SUBTITLES: Record<DesignSub, string> = {
   sport: 'Pick your sport. We match the clubs.',
+  place: 'Where’s your club based? Pick your department.',
   club: 'Pick the club you fight for.',
   template: 'Your club’s design — confirm to continue.',
 }
@@ -39,11 +41,13 @@ const FALLBACK_BASE = '/posters/reims-1.jpg'
 
 export function DesignSelection() {
   // Sub-step lives in the store so the header's Back button can step through
-  // sport → club → style before leaving the Design step.
+  // sport → place → club → style before leaving the Design step.
   const {
+    placeId,
     sportId,
     clubId,
     templateId,
+    setPlace,
     setSport,
     setClub,
     setTemplate,
@@ -58,6 +62,7 @@ export function DesignSelection() {
   // True in a Pro Shop and in the non-partner funnel's generic house club.
   const lockedMode = !!shopClubId || clubId === 'generic'
 
+  const [placeQuery, setPlaceQuery] = useState('')
   const [clubQuery, setClubQuery] = useState('')
   const [showComingSoon, setShowComingSoon] = useState(false)
   // The "club not a partner yet" edge case overlays the club grid.
@@ -125,8 +130,36 @@ export function DesignSelection() {
     [teams, sportId],
   )
 
-  // The "club not a partner yet" view — shown from the club step when a club
-  // isn't in the grid.
+  // Locations are DEPARTMENT-level only (client feedback: don't display cities).
+  // The departments are derived from the clubs that exist for the chosen sport,
+  // so a picked department always has at least one club behind it (the deck's
+  // "no dead ends" tip). `placeId` in the store holds the department name.
+  const departments = useMemo(() => {
+    const seen = new Set<string>()
+    for (const c of sportClubs) {
+      const region = findPlaceByCityName(c.city)?.region
+      if (region) seen.add(region)
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b, 'fr'))
+  }, [sportClubs])
+
+  // How many clubs with a ready design sit in each department (for the chosen
+  // sport) — shown as a count badge next to the department name. "Coming Soon"
+  // clubs (partner === false) have no design yet, so they don't count.
+  const departmentCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of sportClubs) {
+      if (c.partner === false) continue
+      const region = findPlaceByCityName(c.city)?.region
+      if (region) counts.set(region, (counts.get(region) ?? 0) + 1)
+    }
+    return counts
+  }, [sportClubs])
+
+  const places = departments.filter((d) => fold(d).includes(fold(placeQuery.trim())))
+
+  // The "club not a partner yet" view — reused from both the place (no search
+  // match) and club (not in grid) steps.
   const notFoundView = (
     <ClubNotFound
       onClose={() => setShowNotFound(false)}
@@ -137,16 +170,23 @@ export function DesignSelection() {
     />
   )
 
-  // Free-text club search within the chosen sport — matches name or city,
+  // Clubs are filtered by BOTH the chosen sport and the chosen department.
+  const clubs =
+    sportId && placeId
+      ? sportClubs.filter((c) => findPlaceByCityName(c.city)?.region === placeId)
+      : []
+
+  // Free-text club search within the chosen area — matches name or city,
   // accent-insensitive (so "etienne" finds "Saint-Étienne").
   const visibleClubs = clubQuery.trim()
-    ? sportClubs.filter(
+    ? clubs.filter(
         (c) => fold(c.name).includes(fold(clubQuery)) || fold(c.city).includes(fold(clubQuery)),
       )
-    : sportClubs
+    : clubs
 
   const crumbs: { key: DesignSub; label: string; done: boolean }[] = [
     { key: 'sport', label: sport?.name ?? 'Sport', done: !!sport },
+    { key: 'place', label: placeId ?? 'Department', done: !!placeId },
     { key: 'club', label: club?.name ?? 'Club', done: !!club },
     {
       key: 'template',
@@ -232,7 +272,7 @@ export function DesignSelection() {
                   transition={{ duration: 0.12, delay: i * 0.03 }}
                   onClick={() => {
                     setSport(s.id)
-                    setSub('club')
+                    setSub('place')
                   }}
                   className={cn(
                     'group relative flex flex-col items-start gap-3 bg-surface p-6 text-left transition-[background-color] duration-100 hover:bg-primary',
@@ -288,6 +328,100 @@ export function DesignSelection() {
           </Dialog>
         </>
       )}
+
+      {/* ── Sub-step: Place (location / department) ───── */}
+      {sub === 'place' && (showNotFound ? notFoundView : (
+        <div>
+          {/* Search — flat input with a leading icon */}
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-4 top-1/2 z-10 size-5 -translate-y-1/2 text-mute"
+              strokeWidth={1.5}
+            />
+            <Input
+              type="search"
+              value={placeQuery}
+              onChange={(e) => setPlaceQuery(e.target.value)}
+              placeholder="Search your department…"
+              className="pl-12 pr-11 [&::-webkit-search-cancel-button]:appearance-none"
+              aria-label="Search your department"
+            />
+            {placeQuery && (
+              <button
+                type="button"
+                onClick={() => setPlaceQuery('')}
+                aria-label="Clear search"
+                className="absolute right-4 top-1/2 z-10 -translate-y-1/2 cursor-pointer text-mute transition-colors duration-100 hover:text-cream"
+              >
+                <X className="size-5" strokeWidth={1.5} />
+              </button>
+            )}
+          </div>
+
+          {/* Scrollable list — flat rows, hairline separators */}
+          {places.length > 0 ? (
+            <div className="mt-4 max-h-[55vh] overflow-y-auto border border-line backdrop-blur-sm">
+              <div className="flex flex-col gap-px bg-line">
+                {places.map((d) => {
+                  const selected = placeId === d
+                  const count = departmentCounts.get(d) ?? 0
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        setPlace(d)
+                        setSub('club')
+                      }}
+                      className={cn(
+                        'group relative flex items-center gap-3 bg-surface px-4 py-3 text-left transition-[background-color] duration-100 hover:bg-primary',
+                        selected && 'outline outline-2 -outline-offset-2 outline-accent',
+                      )}
+                    >
+                      <MapPin
+                        className="size-4 shrink-0 text-mute group-hover:text-cream"
+                        strokeWidth={1.5}
+                      />
+                      {/* Department only — no city line (client feedback). */}
+                      <span className="min-w-0 flex-1 truncate t-card text-[1.75rem] text-cream">
+                        {d}
+                      </span>
+                      {/* How many clubs with a ready design are in this department. */}
+                      <span
+                        className={cn(
+                          'shrink-0 px-2 py-0.5 label tabular-nums',
+                          count > 0 ? 'bg-cream text-ink' : 'bg-cream/10 text-mute',
+                        )}
+                        aria-label={`${count} ${count === 1 ? 'club' : 'clubs'} with a design`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mt-4 border border-line bg-surface p-8 text-center t-body backdrop-blur-sm">
+                No departments with a club match “{placeQuery.trim()}”. Try another spelling.
+              </div>
+              {/* Escape hatch when the search finds nothing — same CTA as the club step. */}
+              <div className="mt-6 flex flex-col items-center gap-3 border-t border-line pt-6 text-center">
+                <p className="label-wide text-mute">Don’t see your club?</p>
+                <button
+                  type="button"
+                  onClick={() => setShowNotFound(true)}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap t-card text-xl text-cream transition-colors duration-100 hover:text-accent"
+                >
+                  My Club Isn’t Listed
+                  <ArrowRight className="size-4" strokeWidth={1.5} />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ))}
 
       {/* ── Sub-step: Club ────────────────────────────── */}
       {sub === 'club' &&
@@ -389,7 +523,7 @@ export function DesignSelection() {
           </div>
           ) : (
             <div className="border border-line bg-surface p-8 text-center t-body backdrop-blur-sm">
-              No club matches “{clubQuery.trim()}” for this sport.
+              No club matches “{clubQuery.trim()}” in this area.
             </div>
           )}
 

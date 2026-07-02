@@ -1,5 +1,13 @@
 // Core domain types for the PosterLab tunnel.
 
+/** A French place (city/town) used to group clubs by département in the Design step. */
+export interface Place {
+  id: string
+  name: string
+  /** French région the place belongs to — the level shown in the location list. */
+  region: string
+}
+
 export interface Sport {
   id: string
   name: string
